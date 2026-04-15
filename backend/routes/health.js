@@ -67,6 +67,9 @@ router.get("/", noCache, async (req, res) => {
       payload.appVersion = process.env.APP_VERSION || rootPackageVersion || "unknown";
       payload.rootFolderConfigured = lidarrConfigured;
       payload.lidarrConfigured = lidarrConfigured;
+      payload.slskdConfigured = !!(
+        settings.integrations?.slskd?.url && settings.integrations?.slskd?.apiKey
+      );
       payload.lastfmConfigured = !!getLastfmApiKey();
       payload.ticketmasterConfigured = !!getTicketmasterApiKey();
       payload.musicbrainzConfigured = !!(

@@ -78,6 +78,34 @@ db.exec(`
     created_at INTEGER NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS external_slskd_downloads (
+    id TEXT PRIMARY KEY,
+    playlist_type TEXT NOT NULL,
+    playlist_id TEXT,
+    job_id TEXT NOT NULL,
+    artist_name TEXT NOT NULL,
+    track_name TEXT NOT NULL,
+    album_name TEXT,
+    slskd_username TEXT NOT NULL,
+    remote_path TEXT NOT NULL,
+    remote_size INTEGER,
+    slskd_transfer_id TEXT,
+    slskd_state TEXT,
+    local_relative_path TEXT,
+    slskd_local_path TEXT,
+    final_path TEXT,
+    finalize_mode TEXT NOT NULL DEFAULT 'hardlink',
+    backend_state TEXT NOT NULL DEFAULT 'queued',
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    enqueued_at TEXT NOT NULL,
+    completed_at TEXT,
+    finalized_at TEXT,
+    cleaned_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS deezer_mbid_cache (
     cache_key TEXT PRIMARY KEY,
     mbid TEXT NOT NULL
@@ -98,6 +126,10 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_weekly_flow_jobs_status ON weekly_flow_jobs(status);
   CREATE INDEX IF NOT EXISTS idx_weekly_flow_jobs_playlist_type ON weekly_flow_jobs(playlist_type);
+  CREATE INDEX IF NOT EXISTS idx_external_slskd_downloads_backend_state ON external_slskd_downloads(backend_state);
+  CREATE INDEX IF NOT EXISTS idx_external_slskd_downloads_playlist_type ON external_slskd_downloads(playlist_type);
+  CREATE INDEX IF NOT EXISTS idx_external_slskd_downloads_job_id ON external_slskd_downloads(job_id);
+  CREATE INDEX IF NOT EXISTS idx_external_slskd_downloads_transfer_id ON external_slskd_downloads(slskd_transfer_id);
   CREATE INDEX IF NOT EXISTS idx_images_cache_cache_age ON images_cache(cache_age);
   CREATE INDEX IF NOT EXISTS idx_musicbrainz_artist_mbid_cache_updated_at ON musicbrainz_artist_mbid_cache(updated_at);
   CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);

@@ -27,6 +27,7 @@ router.post("/", async (req, res) => {
 
     const currentSettings = dbOps.getSettings();
     const lidarrExternalUrl = integrations?.lidarr?.externalUrl;
+    const slskdUrl = integrations?.slskd?.url;
     if (lidarrExternalUrl !== undefined) {
       const trimmedExternalUrl = String(lidarrExternalUrl).trim();
       if (trimmedExternalUrl) {
@@ -37,6 +38,18 @@ router.post("/", async (req, res) => {
         integrations.lidarr.externalUrl = urlValidation.url;
       } else {
         integrations.lidarr.externalUrl = "";
+      }
+    }
+    if (slskdUrl !== undefined) {
+      const trimmedSlskdUrl = String(slskdUrl).trim();
+      if (trimmedSlskdUrl) {
+        const urlValidation = validateExternalUrl(trimmedSlskdUrl);
+        if (!urlValidation.valid) {
+          return res.status(400).json({ error: urlValidation.error });
+        }
+        integrations.slskd.url = urlValidation.url;
+      } else {
+        integrations.slskd.url = "";
       }
     }
 
@@ -394,6 +407,72 @@ router.post("/gotify/test", async (req, res) => {
     res
       .status(status && status >= 400 ? status : 500)
       .json({ error: "Gotify test failed", message: msg });
+  }
+});
+
+router.get("/slskd/test", async (req, res) => {
+  try {
+    const { slskdClient } = await import("../services/slskdClient.js");
+
+    const testUrl = req.query.url;
+    const testApiKey = req.query.apiKey;
+
+    let url, apiKey;
+    if (testUrl && testApiKey) {
+      url = testUrl.trim();
+      apiKey = testApiKey.trim();
+    } else {
+      slskdClient.updateConfig();
+      const config = slskdClient.getConfig();
+      url = config.url;
+      apiKey = config.apiKey;
+    }
+
+    if (!url || !apiKey) {
+      return res
+        .status(400)
+        .json({ error: "slskd URL and API key are required" });
+    }
+    const urlValidation = validateExternalUrl(url);
+    if (!urlValidation.valid) {
+      return res.status(400).json({ error: urlValidation.error });
+    }
+    url = urlValidation.url;
+
+    const originalConfig = { ...slskdClient.config };
+    slskdClient.config = {
+      ...originalConfig,
+      url: url.replace(/\/+$/, ""),
+      apiKey: apiKey.trim(),
+    };
+
+    try {
+      const result = await slskdClient.testConnection(true);
+      if (result.connected) {
+        return res.json({
+          success: true,
+          message: "Connection successful",
+          version: result.version,
+          instanceName: result.instanceName,
+          apiPath: result.apiPath,
+        });
+      }
+      return res.status(400).json({
+        error: "Connection failed",
+        message: result.error,
+        url: result.url,
+      });
+    } finally {
+      slskdClient.config = originalConfig;
+      slskdClient.updateConfig();
+    }
+  } catch (error) {
+    console.error("[Settings] slskd test error:", error);
+    res.status(500).json({
+      error: "Connection failed",
+      message: error.message,
+      stack: process.env.NODE_ENV === "development" ? error.stack : undefined,
+    });
   }
 });
 

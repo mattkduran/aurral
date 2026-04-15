@@ -5,6 +5,7 @@ import {
   getLidarrMetadataProfiles,
   getLidarrProfiles,
   testLidarrConnection,
+  testSlskdConnection,
 } from "../../../utils/api";
 
 export function SettingsIntegrationsTab({
@@ -31,9 +32,12 @@ export function SettingsIntegrationsTab({
   showInfo,
 }) {
   const [lidarrEditing, setLidarrEditing] = useState(false);
+  const [slskdEditing, setSlskdEditing] = useState(false);
   const [ticketmasterEditing, setTicketmasterEditing] = useState(false);
   const [navidromeEditing, setNavidromeEditing] = useState(false);
   const [lidarrTestLatencyMs, setLidarrTestLatencyMs] = useState(null);
+  const [testingSlskd, setTestingSlskd] = useState(false);
+  const [slskdTestLatencyMs, setSlskdTestLatencyMs] = useState(null);
   const safeLidarrProfiles = Array.isArray(lidarrProfiles)
     ? lidarrProfiles
     : [];
@@ -154,6 +158,41 @@ export function SettingsIntegrationsTab({
       showError(`Failed to load metadata profiles: ${errorMsg}`);
     } finally {
       setLoadingLidarrMetadataProfiles(false);
+    }
+  };
+
+  const handleTestSlskd = async () => {
+    const url = settings.integrations?.slskd?.url;
+    const apiKey = settings.integrations?.slskd?.apiKey;
+    if (!url || !apiKey) {
+      showError("Please enter both slskd URL and API key");
+      return;
+    }
+    setTestingSlskd(true);
+    setSlskdTestLatencyMs(null);
+    const startTime = performance.now();
+    try {
+      const result = await testSlskdConnection(url, apiKey);
+      setSlskdTestLatencyMs(Math.round(performance.now() - startTime));
+      if (result.success) {
+        showSuccess(
+          `slskd connection successful! (${result.instanceName || "slskd"})`,
+        );
+        if (result.version) {
+          showInfo(`slskd reported version: ${result.version}`);
+        }
+      } else {
+        showError(`Connection failed: ${result.message || result.error}`);
+      }
+    } catch (err) {
+      setSlskdTestLatencyMs(Math.round(performance.now() - startTime));
+      const errorMsg =
+        err.response?.data?.message ||
+        err.response?.data?.error ||
+        err.message;
+      showError(`Connection failed: ${errorMsg}`);
+    } finally {
+      setTestingSlskd(false);
     }
   };
 
@@ -567,6 +606,246 @@ export function SettingsIntegrationsTab({
                 >
                   Read more
                 </a>
+              </p>
+            </div>
+          </fieldset>
+        </div>
+        <div
+          className="p-6 rounded-lg space-y-4"
+          style={{
+            backgroundColor: "#1a1a1e",
+            border: "1px solid #2a2a2e",
+          }}
+        >
+          <div className="flex items-center justify-between mb-2">
+            <h3
+              className="text-lg font-medium flex items-center"
+              style={{ color: "#fff" }}
+            >
+              External slskd
+            </h3>
+            <div className="flex items-center gap-2">
+              {health?.slskdConfigured && (
+                <span className="flex items-center text-sm text-green-400">
+                  <CheckCircle className="w-4 h-4 mr-1" />
+                  Configured
+                </span>
+              )}
+              <button
+                type="button"
+                className={`btn ${
+                  slskdEditing ? "btn-primary" : "btn-secondary"
+                } px-2 py-1`}
+                onClick={() => setSlskdEditing((value) => !value)}
+                aria-label={
+                  slskdEditing ? "Lock slskd settings" : "Edit slskd settings"
+                }
+              >
+                <Pencil className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+          <fieldset
+            disabled={!slskdEditing}
+            className={`grid grid-cols-1 gap-4 ${
+              slskdEditing ? "" : "opacity-60"
+            }`}
+          >
+            <div>
+              <label
+                className="block text-sm font-medium mb-1"
+                style={{ color: "#fff" }}
+              >
+                Flow / Playlist Download Backend
+              </label>
+              <select
+                className="input"
+                value={settings.integrations?.slskd?.downloadBackend || "builtin"}
+                onChange={(e) =>
+                  updateSettings({
+                    ...settings,
+                    integrations: {
+                      ...settings.integrations,
+                      slskd: {
+                        ...(settings.integrations?.slskd || {}),
+                        downloadBackend: e.target.value,
+                      },
+                    },
+                  })
+                }
+              >
+                <option value="builtin">Built-in Soulseek</option>
+                <option value="external_slskd">External slskd</option>
+              </select>
+              <p className="mt-1 text-xs" style={{ color: "#c1c1c3" }}>
+                Controls how flows and imported playlists acquire tracks. Lidarr
+                artist and album behavior stays unchanged.
+              </p>
+            </div>
+            <div>
+              <label
+                className="block text-sm font-medium mb-1"
+                style={{ color: "#fff" }}
+              >
+                slskd Server URL
+              </label>
+              <input
+                type="url"
+                className="input"
+                placeholder="http://slskd:5030"
+                autoComplete="off"
+                value={settings.integrations?.slskd?.url || ""}
+                onChange={(e) => {
+                  setSlskdTestLatencyMs(null);
+                  updateSettings({
+                    ...settings,
+                    integrations: {
+                      ...settings.integrations,
+                      slskd: {
+                        ...(settings.integrations?.slskd || {}),
+                        url: e.target.value,
+                      },
+                    },
+                  });
+                }}
+              />
+            </div>
+            <div>
+              <label
+                className="block text-sm font-medium mb-1"
+                style={{ color: "#fff" }}
+              >
+                API Key
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="password"
+                  className="input flex-1"
+                  placeholder="Enter slskd API key"
+                  autoComplete="off"
+                  value={settings.integrations?.slskd?.apiKey || ""}
+                  onChange={(e) => {
+                    setSlskdTestLatencyMs(null);
+                    updateSettings({
+                      ...settings,
+                      integrations: {
+                        ...settings.integrations,
+                        slskd: {
+                          ...(settings.integrations?.slskd || {}),
+                          apiKey: e.target.value,
+                        },
+                      },
+                    });
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={handleTestSlskd}
+                  disabled={
+                    testingSlskd ||
+                    !settings.integrations?.slskd?.url ||
+                    !settings.integrations?.slskd?.apiKey
+                  }
+                  className="btn btn-secondary"
+                >
+                  {testingSlskd ? "Testing..." : "Test"}
+                </button>
+              </div>
+              {slskdTestLatencyMs !== null && (
+                <p className="mt-1 text-xs" style={{ color: "#c1c1c3" }}>
+                  Last test response time: {slskdTestLatencyMs} ms
+                </p>
+              )}
+            </div>
+            <div>
+              <label
+                className="block text-sm font-medium mb-1"
+                style={{ color: "#fff" }}
+              >
+                Complete Directory
+              </label>
+              <input
+                type="text"
+                className="input"
+                placeholder="/slskd-complete"
+                autoComplete="off"
+                value={settings.integrations?.slskd?.completeDir || ""}
+                onChange={(e) =>
+                  updateSettings({
+                    ...settings,
+                    integrations: {
+                      ...settings.integrations,
+                      slskd: {
+                        ...(settings.integrations?.slskd || {}),
+                        completeDir: e.target.value,
+                      },
+                    },
+                  })
+                }
+              />
+              <p className="mt-1 text-xs" style={{ color: "#c1c1c3" }}>
+                Path to slskd&apos;s complete downloads directory as seen by the
+                Aurral container.
+              </p>
+            </div>
+            <div>
+              <label
+                className="block text-sm font-medium mb-1"
+                style={{ color: "#fff" }}
+              >
+                Finalization Mode
+              </label>
+              <select
+                className="input"
+                value={settings.integrations?.slskd?.finalizationMode || "hardlink"}
+                onChange={(e) =>
+                  updateSettings({
+                    ...settings,
+                    integrations: {
+                      ...settings.integrations,
+                      slskd: {
+                        ...(settings.integrations?.slskd || {}),
+                        finalizationMode: e.target.value,
+                      },
+                    },
+                  })
+                }
+              >
+                <option value="hardlink">Hardlink</option>
+                <option value="copy">Copy</option>
+              </select>
+            </div>
+            <div>
+              <label
+                className="block text-sm font-medium mb-1"
+                style={{ color: "#fff" }}
+              >
+                Source Cleanup Mode
+              </label>
+              <select
+                className="input"
+                value={settings.integrations?.slskd?.cleanupMode || "none"}
+                onChange={(e) =>
+                  updateSettings({
+                    ...settings,
+                    integrations: {
+                      ...settings.integrations,
+                      slskd: {
+                        ...(settings.integrations?.slskd || {}),
+                        cleanupMode: e.target.value,
+                      },
+                    },
+                  })
+                }
+              >
+                <option value="none">Do not delete shared slskd sources</option>
+                <option value="aurral_owned_safe_only">
+                  Delete only proven Aurral-owned sources
+                </option>
+              </select>
+              <p className="mt-1 text-xs" style={{ color: "#c1c1c3" }}>
+                Shared-instance safe mode defaults to preserving the original
+                slskd source files.
               </p>
             </div>
           </fieldset>

@@ -53,6 +53,10 @@ export const normalizeSettings = (savedSettings) => {
       slskd: {
         url: "",
         apiKey: "",
+        downloadBackend: "builtin",
+        completeDir: "",
+        finalizationMode: "hardlink",
+        cleanupMode: "none",
         ...(savedSettings.integrations?.slskd || {}),
       },
       ticketmaster: {

@@ -28,7 +28,14 @@ const defaultSettings = {
       discoveryAutoRefreshHours: 168,
       discoveryRecommendationsPerRefresh: 100,
     },
-    slskd: { url: "", apiKey: "" },
+    slskd: {
+      url: "",
+      apiKey: "",
+      downloadBackend: "builtin",
+      completeDir: "",
+      finalizationMode: "hardlink",
+      cleanupMode: "none",
+    },
     ticketmaster: { apiKey: "", searchRadiusMiles: 50 },
     lidarr: {
       url: "",

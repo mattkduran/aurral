@@ -58,6 +58,81 @@ const deleteArtistOverrideStmt = db.prepare(
   "DELETE FROM artist_overrides WHERE mbid = ?"
 );
 
+const insertExternalSlskdDownloadStmt = db.prepare(`
+  INSERT INTO external_slskd_downloads (
+    id,
+    playlist_type,
+    playlist_id,
+    job_id,
+    artist_name,
+    track_name,
+    album_name,
+    slskd_username,
+    remote_path,
+    remote_size,
+    slskd_transfer_id,
+    slskd_state,
+    local_relative_path,
+    slskd_local_path,
+    final_path,
+    finalize_mode,
+    backend_state,
+    retry_count,
+    last_error,
+    enqueued_at,
+    completed_at,
+    finalized_at,
+    cleaned_at,
+    created_at,
+    updated_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+const getExternalSlskdDownloadByIdStmt = db.prepare(
+  "SELECT * FROM external_slskd_downloads WHERE id = ?"
+);
+const getExternalSlskdDownloadByTransferIdStmt = db.prepare(
+  "SELECT * FROM external_slskd_downloads WHERE slskd_transfer_id = ?"
+);
+const getExternalSlskdDownloadsByPlaylistTypeStmt = db.prepare(
+  "SELECT * FROM external_slskd_downloads WHERE playlist_type = ? ORDER BY created_at ASC, id ASC"
+);
+const getExternalSlskdDownloadsByBackendStateStmt = db.prepare(
+  "SELECT * FROM external_slskd_downloads WHERE backend_state = ? ORDER BY created_at ASC, id ASC"
+);
+const getAllExternalSlskdDownloadsStmt = db.prepare(
+  "SELECT * FROM external_slskd_downloads ORDER BY created_at ASC, id ASC"
+);
+const updateExternalSlskdDownloadStmt = db.prepare(`
+  UPDATE external_slskd_downloads SET
+    playlist_type = ?,
+    playlist_id = ?,
+    job_id = ?,
+    artist_name = ?,
+    track_name = ?,
+    album_name = ?,
+    slskd_username = ?,
+    remote_path = ?,
+    remote_size = ?,
+    slskd_transfer_id = ?,
+    slskd_state = ?,
+    local_relative_path = ?,
+    slskd_local_path = ?,
+    final_path = ?,
+    finalize_mode = ?,
+    backend_state = ?,
+    retry_count = ?,
+    last_error = ?,
+    enqueued_at = ?,
+    completed_at = ?,
+    finalized_at = ?,
+    cleaned_at = ?,
+    updated_at = ?
+  WHERE id = ?
+`);
+const deleteExternalSlskdDownloadStmt = db.prepare(
+  "DELETE FROM external_slskd_downloads WHERE id = ?"
+);
+
 const getUserByUsernameStmt = db.prepare(
   "SELECT * FROM users WHERE username = ?"
 );
@@ -575,5 +650,202 @@ export const dbOps = {
   deleteArtistOverride(mbid) {
     if (!mbid) return null;
     return deleteArtistOverrideStmt.run(mbid);
+  },
+};
+
+function rowToExternalSlskdDownload(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    playlistType: row.playlist_type,
+    playlistId: row.playlist_id || null,
+    jobId: row.job_id,
+    artistName: row.artist_name,
+    trackName: row.track_name,
+    albumName: row.album_name || null,
+    slskdUsername: row.slskd_username,
+    remotePath: row.remote_path,
+    remoteSize:
+      row.remote_size == null ? null : Number.parseInt(row.remote_size, 10),
+    slskdTransferId: row.slskd_transfer_id || null,
+    slskdState: row.slskd_state || null,
+    localRelativePath: row.local_relative_path || null,
+    slskdLocalPath: row.slskd_local_path || null,
+    finalPath: row.final_path || null,
+    finalizeMode: row.finalize_mode || "hardlink",
+    backendState: row.backend_state,
+    retryCount: Number.parseInt(row.retry_count || 0, 10),
+    lastError: row.last_error || null,
+    enqueuedAt: row.enqueued_at,
+    completedAt: row.completed_at || null,
+    finalizedAt: row.finalized_at || null,
+    cleanedAt: row.cleaned_at || null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function normalizeExternalSlskdDownload(entry) {
+  const now = new Date().toISOString();
+  return {
+    id: String(entry?.id || "").trim(),
+    playlistType: String(entry?.playlistType || "").trim(),
+    playlistId:
+      entry?.playlistId == null ? null : String(entry.playlistId).trim() || null,
+    jobId: String(entry?.jobId || "").trim(),
+    artistName: String(entry?.artistName || "").trim(),
+    trackName: String(entry?.trackName || "").trim(),
+    albumName:
+      entry?.albumName == null ? null : String(entry.albumName).trim() || null,
+    slskdUsername: String(entry?.slskdUsername || "").trim(),
+    remotePath: String(entry?.remotePath || "").trim(),
+    remoteSize:
+      entry?.remoteSize == null || entry.remoteSize === ""
+        ? null
+        : Number.parseInt(entry.remoteSize, 10),
+    slskdTransferId:
+      entry?.slskdTransferId == null
+        ? null
+        : String(entry.slskdTransferId).trim() || null,
+    slskdState:
+      entry?.slskdState == null ? null : String(entry.slskdState).trim() || null,
+    localRelativePath:
+      entry?.localRelativePath == null
+        ? null
+        : String(entry.localRelativePath).trim() || null,
+    slskdLocalPath:
+      entry?.slskdLocalPath == null
+        ? null
+        : String(entry.slskdLocalPath).trim() || null,
+    finalPath:
+      entry?.finalPath == null ? null : String(entry.finalPath).trim() || null,
+    finalizeMode:
+      String(entry?.finalizeMode || "hardlink").trim().toLowerCase() || "hardlink",
+    backendState: String(entry?.backendState || "queued").trim() || "queued",
+    retryCount: Number.isFinite(Number(entry?.retryCount))
+      ? Math.max(0, Math.floor(Number(entry.retryCount)))
+      : 0,
+    lastError:
+      entry?.lastError == null ? null : String(entry.lastError).trim() || null,
+    enqueuedAt: String(entry?.enqueuedAt || now),
+    completedAt:
+      entry?.completedAt == null ? null : String(entry.completedAt).trim() || null,
+    finalizedAt:
+      entry?.finalizedAt == null ? null : String(entry.finalizedAt).trim() || null,
+    cleanedAt:
+      entry?.cleanedAt == null ? null : String(entry.cleanedAt).trim() || null,
+    createdAt: String(entry?.createdAt || now),
+    updatedAt: String(entry?.updatedAt || now),
+  };
+}
+
+export const externalSlskdDownloadOps = {
+  getById(id) {
+    if (!id) return null;
+    return rowToExternalSlskdDownload(getExternalSlskdDownloadByIdStmt.get(id));
+  },
+  getByTransferId(slskdTransferId) {
+    if (!slskdTransferId) return null;
+    return rowToExternalSlskdDownload(
+      getExternalSlskdDownloadByTransferIdStmt.get(slskdTransferId)
+    );
+  },
+  getByPlaylistType(playlistType) {
+    if (!playlistType) return [];
+    return getExternalSlskdDownloadsByPlaylistTypeStmt
+      .all(String(playlistType))
+      .map(rowToExternalSlskdDownload);
+  },
+  getByBackendState(backendState) {
+    if (!backendState) return [];
+    return getExternalSlskdDownloadsByBackendStateStmt
+      .all(String(backendState))
+      .map(rowToExternalSlskdDownload);
+  },
+  getAll() {
+    return getAllExternalSlskdDownloadsStmt.all().map(rowToExternalSlskdDownload);
+  },
+  insert(entry) {
+    const normalized = normalizeExternalSlskdDownload(entry);
+    if (
+      !normalized.id ||
+      !normalized.playlistType ||
+      !normalized.jobId ||
+      !normalized.artistName ||
+      !normalized.trackName ||
+      !normalized.slskdUsername ||
+      !normalized.remotePath
+    ) {
+      throw new Error("Missing required external slskd download fields");
+    }
+    insertExternalSlskdDownloadStmt.run(
+      normalized.id,
+      normalized.playlistType,
+      normalized.playlistId,
+      normalized.jobId,
+      normalized.artistName,
+      normalized.trackName,
+      normalized.albumName,
+      normalized.slskdUsername,
+      normalized.remotePath,
+      normalized.remoteSize,
+      normalized.slskdTransferId,
+      normalized.slskdState,
+      normalized.localRelativePath,
+      normalized.slskdLocalPath,
+      normalized.finalPath,
+      normalized.finalizeMode,
+      normalized.backendState,
+      normalized.retryCount,
+      normalized.lastError,
+      normalized.enqueuedAt,
+      normalized.completedAt,
+      normalized.finalizedAt,
+      normalized.cleanedAt,
+      normalized.createdAt,
+      normalized.updatedAt
+    );
+    return normalized;
+  },
+  update(id, changes = {}) {
+    const existing = this.getById(id);
+    if (!existing) return null;
+    const normalized = normalizeExternalSlskdDownload({
+      ...existing,
+      ...changes,
+      id: existing.id,
+      updatedAt: new Date().toISOString(),
+    });
+    updateExternalSlskdDownloadStmt.run(
+      normalized.playlistType,
+      normalized.playlistId,
+      normalized.jobId,
+      normalized.artistName,
+      normalized.trackName,
+      normalized.albumName,
+      normalized.slskdUsername,
+      normalized.remotePath,
+      normalized.remoteSize,
+      normalized.slskdTransferId,
+      normalized.slskdState,
+      normalized.localRelativePath,
+      normalized.slskdLocalPath,
+      normalized.finalPath,
+      normalized.finalizeMode,
+      normalized.backendState,
+      normalized.retryCount,
+      normalized.lastError,
+      normalized.enqueuedAt,
+      normalized.completedAt,
+      normalized.finalizedAt,
+      normalized.cleanedAt,
+      normalized.updatedAt,
+      normalized.id
+    );
+    return normalized;
+  },
+  delete(id) {
+    if (!id) return null;
+    return deleteExternalSlskdDownloadStmt.run(id);
   },
 };
