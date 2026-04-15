@@ -10,6 +10,10 @@ import { playlistManager } from "../services/weeklyFlowPlaylistManager.js";
 import { flowPlaylistConfig } from "../services/weeklyFlowPlaylistConfig.js";
 import { weeklyFlowOperationQueue } from "../services/weeklyFlowOperationQueue.js";
 import { getWeeklyFlowStatusSnapshot } from "../services/weeklyFlowStatusSnapshot.js";
+import { getWeeklyFlowDownloadBackendStatus } from "../services/weeklyFlowDownloadBackend.js";
+import { slskdCleanupService } from "../services/slskdCleanupService.js";
+import { slskdReconciler } from "../services/slskdReconciler.js";
+import { dbOps, externalSlskdDownloadOps } from "../config/db-helpers.js";
 import { noCache } from "../middleware/cache.js";
 import { hasPermission, verifyTokenAuth } from "../middleware/auth.js";
 import {
@@ -33,6 +37,25 @@ const isPathInsideRoot = (candidatePath, rootPath) => {
   return (
     relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative)
   );
+};
+
+const getExternalCleanupOptions = () => {
+  const settings = dbOps.getSettings();
+  return {
+    cleanupMode: String(settings.integrations?.slskd?.cleanupMode || "none"),
+  };
+};
+
+const ensureDownloadBackendConfigured = (res) => {
+  const backendStatus = getWeeklyFlowDownloadBackendStatus();
+  if (backendStatus.configured) {
+    return true;
+  }
+  res.status(400).json({
+    error: backendStatus.error || "Download backend not configured",
+    backend: backendStatus.name,
+  });
+  return false;
 };
 
 const normalizeImportedTrackList = (value) => {
@@ -281,6 +304,10 @@ const queueFlowEnableRefresh = (flowId, mutationVersion) => {
       try {
         playlistManager.updateConfig(false);
         await playlistManager.weeklyReset([flowId]);
+        await slskdCleanupService.cleanupPlaylist(
+          flowId,
+          getExternalCleanupOptions(),
+        );
         downloadTracker.clearByPlaylistType(flowId);
 
         if (
@@ -335,6 +362,10 @@ const queueFlowDisableCleanup = (flowId, mutationVersion) => {
       try {
         playlistManager.updateConfig(false);
         await playlistManager.weeklyReset([flowId]);
+        await slskdCleanupService.cleanupPlaylist(
+          flowId,
+          getExternalCleanupOptions(),
+        );
         downloadTracker.clearByPlaylistType(flowId);
 
         if (flowEnableMutationVersion.get(flowId) !== mutationVersion) {
@@ -362,11 +393,7 @@ router.post("/start/:flowId", async (req, res) => {
       return res.status(404).json({ error: "Flow not found" });
     }
 
-    if (!soulseekClient.isConfigured()) {
-      return res.status(400).json({
-        error: "Soulseek credentials not configured",
-      });
-    }
+    if (!ensureDownloadBackendConfigured(res)) return;
 
     const mutationVersion = (flowEnableMutationVersion.get(flowId) || 0) + 1;
     flowEnableMutationVersion.set(flowId, mutationVersion);
@@ -386,6 +413,10 @@ router.post("/start/:flowId", async (req, res) => {
         try {
           playlistManager.updateConfig(false);
           await playlistManager.weeklyReset([flowId]);
+          await slskdCleanupService.cleanupPlaylist(
+            flowId,
+            getExternalCleanupOptions(),
+          );
           downloadTracker.clearByPlaylistType(flowId);
 
           if (flowEnableMutationVersion.get(flowId) !== mutationVersion) {
@@ -465,6 +496,35 @@ router.get("/status", (req, res) => {
       jobsLimit,
     }),
   );
+});
+
+router.get("/external-downloads", (req, res) => {
+  const playlistType = req.query.playlistType
+    ? String(req.query.playlistType)
+    : null;
+  const rows = playlistType
+    ? externalSlskdDownloadOps.getByPlaylistType(playlistType)
+    : externalSlskdDownloadOps.getAll();
+  res.json({
+    success: true,
+    count: rows.length,
+    downloads: rows,
+  });
+});
+
+router.post("/external-downloads/reconcile", async (req, res) => {
+  try {
+    const result = await slskdReconciler.reconcileAll();
+    res.json({
+      success: true,
+      ...result,
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: "Failed to reconcile external slskd downloads",
+      message: error.message,
+    });
+  }
 });
 
 router.post("/flows", async (req, res) => {
@@ -571,6 +631,10 @@ router.delete("/flows/:flowId", async (req, res) => {
           weeklyFlowWorker.setRetryCyclePaused(flowId, false);
           playlistManager.updateConfig(false);
           await playlistManager.weeklyReset([flowId]);
+          await slskdCleanupService.cleanupPlaylist(
+            flowId,
+            getExternalCleanupOptions(),
+          );
           downloadTracker.clearByPlaylistType(flowId);
           didDelete = flowPlaylistConfig.deleteFlow(flowId);
           await playlistManager.ensureSmartPlaylists();
@@ -616,11 +680,7 @@ router.put("/flows/:flowId/enabled", async (req, res) => {
     if (enabled) {
       const mutationVersion = (flowEnableMutationVersion.get(flowId) || 0) + 1;
       flowEnableMutationVersion.set(flowId, mutationVersion);
-      if (!soulseekClient.isConfigured()) {
-        return res.status(400).json({
-          error: "Soulseek credentials not configured",
-        });
-      }
+      if (!ensureDownloadBackendConfigured(res)) return;
 
       flowPlaylistConfig.setEnabled(flowId, true);
       flowPlaylistConfig.scheduleNextRun(flowId);
@@ -746,6 +806,10 @@ router.post("/flows/:flowId/static-playlist", async (req, res) => {
     if (playlist?.id) {
       try {
         await playlistManager.weeklyReset([playlist.id]);
+        await slskdCleanupService.cleanupPlaylist(
+          playlist.id,
+          getExternalCleanupOptions(),
+        );
         flowPlaylistConfig.deleteSharedPlaylist(playlist.id);
         await playlistManager.ensureSmartPlaylists();
       } catch {}
@@ -783,11 +847,7 @@ router.post("/shared-playlists/import", async (req, res) => {
         message: "Import file must include at least one track",
       });
     }
-    if (!soulseekClient.isConfigured()) {
-      return res.status(400).json({
-        error: "Soulseek credentials not configured",
-      });
-    }
+    if (!ensureDownloadBackendConfigured(res)) return;
 
     const playlist = flowPlaylistConfig.createSharedPlaylist({
       name: safeName,
@@ -915,6 +975,10 @@ router.put("/shared-playlists/:playlistId", async (req, res) => {
               await fsp.rm(safeFinalPath, { force: true });
             }
           }
+          await slskdCleanupService.cleanupJob(
+            job.id,
+            getExternalCleanupOptions(),
+          );
           downloadTracker.removeJob(job.id);
         }
 
@@ -989,6 +1053,7 @@ router.delete(
       }
 
       await fsp.rm(safeFinalPath, { force: true });
+      await slskdCleanupService.cleanupJob(jobId, getExternalCleanupOptions());
       downloadTracker.removeJob(jobId);
 
       const nextTracks = Array.isArray(playlist.tracks)
@@ -1043,6 +1108,10 @@ router.delete("/shared-playlists/:playlistId", async (req, res) => {
       weeklyFlowWorker.setRetryCyclePaused(playlistId, false);
       playlistManager.updateConfig(false);
       await playlistManager.weeklyReset([playlistId]);
+      await slskdCleanupService.cleanupPlaylist(
+        playlistId,
+        getExternalCleanupOptions(),
+      );
       downloadTracker.clearByPlaylistType(playlistId);
       deleted = flowPlaylistConfig.deleteSharedPlaylist(playlistId);
       await playlistManager.ensureSmartPlaylists();
@@ -1225,6 +1294,12 @@ router.post("/reset", async (req, res) => {
       try {
         playlistManager.updateConfig(false);
         await playlistManager.weeklyReset(types);
+        for (const playlistType of types) {
+          await slskdCleanupService.cleanupPlaylist(
+            playlistType,
+            getExternalCleanupOptions(),
+          );
+        }
       } finally {
         releaseMutation();
       }

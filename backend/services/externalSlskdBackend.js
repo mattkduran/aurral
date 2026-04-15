@@ -1,6 +1,7 @@
 import { dbOps } from "../config/db-helpers.js";
 import { slskdClient } from "./slskdClient.js";
 import { slskdTransferStore } from "./slskdTransferStore.js";
+import { slskdReconciler } from "./slskdReconciler.js";
 
 const DEFAULT_MAX_MATCHES = 25;
 
@@ -152,6 +153,45 @@ export class ExternalSlskdBackend {
     timeoutMs,
     pollIntervalMs,
   }) {
+    const reusable = await slskdReconciler.buildReusableAcquisition(jobId);
+    if (reusable?.alreadyFinalized) {
+      return reusable;
+    }
+
+    if (reusable?.id) {
+      try {
+        const transfer = await slskdClient.waitForDownload(
+          {
+            username: reusable.slskdUsername,
+            remotePath: reusable.remotePath,
+            size: reusable.remoteSize,
+            transferId: reusable.slskdTransferId,
+          },
+          {
+            timeoutMs,
+            pollIntervalMs,
+            onProgress,
+          },
+        );
+        if (!transfer.localPath) {
+          throw new Error(
+            "slskd download completed but no local path could be resolved. Check the configured slskd complete directory.",
+          );
+        }
+        const updated = slskdTransferStore.syncTransfer(reusable.id, transfer);
+        return {
+          manifestRow: updated,
+          selectedMatch: match,
+          sourcePath: transfer.localPath,
+          selectedExt: match?.extension || "",
+        };
+      } catch (error) {
+        slskdTransferStore.markState(reusable.id, "failed", {
+          lastError: error?.message || String(error),
+        });
+      }
+    }
+
     const manifestRow = await this.enqueueTrack({
       playlistType,
       playlistId,

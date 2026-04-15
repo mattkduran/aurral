@@ -429,6 +429,25 @@ export class SlskdClient {
     );
   }
 
+  async deleteDownload({ username, transferId }) {
+    const normalizedUsername = String(username || "").trim();
+    const normalizedTransferId = String(transferId || "").trim();
+    if (!normalizedUsername || !normalizedTransferId) {
+      return null;
+    }
+    try {
+      return await this.request(
+        `/api/v0/transfers/downloads/${encodeURIComponent(normalizedUsername)}/${encodeURIComponent(normalizedTransferId)}`,
+        { method: "DELETE" },
+      );
+    } catch (error) {
+      if (/404/.test(String(error?.message || ""))) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
   async enqueueDownload({ username, filename, size }) {
     const normalizedUsername = String(username || "").trim();
     const normalizedFilename = String(filename || "").trim();

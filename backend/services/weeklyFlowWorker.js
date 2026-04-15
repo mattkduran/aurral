@@ -4,7 +4,11 @@ import { downloadTracker } from "./weeklyFlowDownloadTracker.js";
 import { playlistManager } from "./weeklyFlowPlaylistManager.js";
 import { flowPlaylistConfig } from "./weeklyFlowPlaylistConfig.js";
 import { playlistSource } from "./weeklyFlowPlaylistSource.js";
-import { getWeeklyFlowDownloadBackend } from "./weeklyFlowDownloadBackend.js";
+import {
+  getWeeklyFlowDownloadBackend,
+  getWeeklyFlowDownloadBackendStatus,
+} from "./weeklyFlowDownloadBackend.js";
+import { slskdReconciler } from "./slskdReconciler.js";
 import { dbOps } from "../config/db-helpers.js";
 
 const DEFAULT_CONCURRENCY = 3;
@@ -671,6 +675,17 @@ export class WeeklyFlowWorker {
       return;
     }
 
+    const backendStatus = getWeeklyFlowDownloadBackendStatus();
+    if (!backendStatus.configured) {
+      throw new Error(
+        backendStatus.error || "Download backend is not configured",
+      );
+    }
+
+    if (backendStatus.name === "external_slskd") {
+      await slskdReconciler.reconcileAll();
+    }
+
     this.runGeneration += 1;
     this.running = true;
     console.log("[WeeklyFlowWorker] Starting worker...");
@@ -906,6 +921,8 @@ export class WeeklyFlowWorker {
       let selectedMatch = null;
       let selectedExt = ".mp3";
       let downloadedSourcePath = null;
+      let alreadyFinalizedPath = null;
+      let preResolvedAlbum = null;
       let lastError = null;
 
       await new Promise((r) => setImmediate(r));
@@ -1035,6 +1052,10 @@ export class WeeklyFlowWorker {
               this.currentJob.progressPct = 100;
             }
             downloadedSourcePath = acquired?.sourcePath || null;
+            alreadyFinalizedPath = acquired?.alreadyFinalized
+              ? acquired?.finalPath || acquired?.sourcePath || null
+              : null;
+            preResolvedAlbum = acquired?.resolvedAlbum || null;
             selectedMatch = acquired?.selectedMatch || candidate.candidate;
             selectedExt = acquired?.selectedExt || ext;
             lastError = null;
@@ -1067,7 +1088,11 @@ export class WeeklyFlowWorker {
       const matchFilePath =
         selectedMatch?.file || selectedMatch?.remotePath || selectedMatch?.path;
       const albumFromPath = this._parseAlbumFromPath(matchFilePath);
-      const resolvedAlbum = albumFromApi || albumFromPath || "Unknown Album";
+      const resolvedAlbum =
+        this._normalizeAlbumName(preResolvedAlbum) ||
+        albumFromApi ||
+        albumFromPath ||
+        "Unknown Album";
       const albumDir = this._sanitizePathPart(resolvedAlbum);
       const finalDir = path.join(
         this.weeklyFlowRoot,
@@ -1081,23 +1106,33 @@ export class WeeklyFlowWorker {
 
       phaseStart = process.hrtime.bigint();
       this._assertJobCanContinue(job, runGeneration);
-      await backend.finalizeDownload({
-        job,
-        selectedMatch,
-        sourcePath,
-        finalDir,
-        finalPath,
-      });
-      await fs.rm(stagingDir, { recursive: true, force: true });
+      if (alreadyFinalizedPath) {
+        await fs.rm(stagingDir, { recursive: true, force: true });
+      } else {
+        await backend.finalizeDownload({
+          job,
+          selectedMatch,
+          sourcePath,
+          finalDir,
+          finalPath,
+        });
+        await fs.rm(stagingDir, { recursive: true, force: true });
+      }
       this._assertJobCanContinue(job, runGeneration);
 
-      downloadTracker.setDone(job.id, finalPath, resolvedAlbum);
+      downloadTracker.setDone(
+        job.id,
+        alreadyFinalizedPath || finalPath,
+        resolvedAlbum,
+      );
       this._resetFailureStreak();
       this.retryAttempts.delete(job.id);
       this.retryNotBefore.delete(job.id);
       this.backupRefillRounds.delete(job.playlistType);
       this._dropOverflowPendingJobs(job.playlistType);
-      console.log(`[WeeklyFlowWorker] Job ${job.id} completed: ${finalPath}`);
+      console.log(
+        `[WeeklyFlowWorker] Job ${job.id} completed: ${alreadyFinalizedPath || finalPath}`,
+      );
       timingsMs.finalize += Number(process.hrtime.bigint() - phaseStart) / 1e6;
 
       phaseStart = process.hrtime.bigint();

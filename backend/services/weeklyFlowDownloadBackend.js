@@ -3,6 +3,7 @@ import path from "path";
 import { dbOps } from "../config/db-helpers.js";
 import { soulseekClient } from "./simpleSoulseekClient.js";
 import { externalSlskdBackend } from "./externalSlskdBackend.js";
+import { slskdClient } from "./slskdClient.js";
 
 const SUPPORTED_EXTENSIONS = /\.(flac|mp3|m4a|ogg|wav)$/i;
 
@@ -131,16 +132,41 @@ class ExternalSlskdDownloadBackend {
 const builtinBackend = new BuiltinSoulseekDownloadBackend();
 const externalBackend = new ExternalSlskdDownloadBackend();
 
-export const getWeeklyFlowDownloadBackend = () => {
+export const getWeeklyFlowDownloadBackendName = () => {
   const settings = dbOps.getSettings();
-  const backend = String(
-    settings.integrations?.slskd?.downloadBackend || "builtin",
-  )
+  return String(settings.integrations?.slskd?.downloadBackend || "builtin")
     .trim()
     .toLowerCase();
+};
+
+export const getWeeklyFlowDownloadBackend = () => {
+  const backend = getWeeklyFlowDownloadBackendName();
 
   if (backend === "external_slskd") {
     return externalBackend;
   }
   return builtinBackend;
+};
+
+export const getWeeklyFlowDownloadBackendStatus = () => {
+  const backend = getWeeklyFlowDownloadBackendName();
+  if (backend === "external_slskd") {
+    const config = externalSlskdBackend.getConfig();
+    const configured =
+      slskdClient.isConfigured() && !!String(config.completeDir || "").trim();
+    return {
+      name: backend,
+      configured,
+      error: configured
+        ? null
+        : "External slskd requires URL, API key, and complete directory configuration",
+    };
+  }
+
+  const configured = soulseekClient.isConfigured();
+  return {
+    name: backend,
+    configured,
+    error: configured ? null : "Soulseek credentials not configured",
+  };
 };

@@ -96,6 +96,9 @@ const getExternalSlskdDownloadByTransferIdStmt = db.prepare(
 const getExternalSlskdDownloadsByPlaylistTypeStmt = db.prepare(
   "SELECT * FROM external_slskd_downloads WHERE playlist_type = ? ORDER BY created_at ASC, id ASC"
 );
+const getExternalSlskdDownloadsByJobIdStmt = db.prepare(
+  "SELECT * FROM external_slskd_downloads WHERE job_id = ? ORDER BY created_at ASC, id ASC"
+);
 const getExternalSlskdDownloadsByBackendStateStmt = db.prepare(
   "SELECT * FROM external_slskd_downloads WHERE backend_state = ? ORDER BY created_at ASC, id ASC"
 );
@@ -754,6 +757,12 @@ export const externalSlskdDownloadOps = {
     if (!playlistType) return [];
     return getExternalSlskdDownloadsByPlaylistTypeStmt
       .all(String(playlistType))
+      .map(rowToExternalSlskdDownload);
+  },
+  getByJobId(jobId) {
+    if (!jobId) return [];
+    return getExternalSlskdDownloadsByJobIdStmt
+      .all(String(jobId))
       .map(rowToExternalSlskdDownload);
   },
   getByBackendState(backendState) {
