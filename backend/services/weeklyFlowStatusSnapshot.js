@@ -3,6 +3,7 @@ import { weeklyFlowWorker } from "./weeklyFlowWorker.js";
 import { flowPlaylistConfig } from "./weeklyFlowPlaylistConfig.js";
 import { weeklyFlowOperationQueue } from "./weeklyFlowOperationQueue.js";
 import { soulseekClient } from "./simpleSoulseekClient.js";
+import { slskdClient } from "./slskdClient.js";
 
 function formatNextRunMessage(flows) {
   const nextRunAt = (Array.isArray(flows) ? flows : [])
@@ -134,7 +135,11 @@ export function getWeeklyFlowStatusSnapshot({
       ...workerStatus,
       stats,
     },
+    downloadBackend: workerStatus?.downloadBackend || "builtin",
     soulseek: soulseekClient.getStatus(),
+    slskd: {
+      configured: slskdClient.isConfigured(),
+    },
     stats,
     flowStats,
     sharedStats,

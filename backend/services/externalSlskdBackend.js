@@ -26,7 +26,9 @@ export class ExternalSlskdBackend {
   }
 
   rankSearchResults(results = [], options = {}) {
-    const desiredTrack = String(options.trackName || "").trim().toLowerCase();
+    const desiredTrack = String(options.trackName || "")
+      .trim()
+      .toLowerCase();
     const preferredFormat = String(options.preferredFormat || "flac")
       .trim()
       .toLowerCase();
@@ -135,6 +137,64 @@ export class ExternalSlskdBackend {
       transfer,
       finalizeMode: finalizeMode || this.getConfig().finalizationMode,
     });
+  }
+
+  async acquireTrack({
+    playlistType,
+    playlistId = null,
+    jobId,
+    artistName,
+    trackName,
+    albumName = null,
+    match,
+    finalizeMode,
+    onProgress = null,
+    timeoutMs,
+    pollIntervalMs,
+  }) {
+    const manifestRow = await this.enqueueTrack({
+      playlistType,
+      playlistId,
+      jobId,
+      artistName,
+      trackName,
+      albumName,
+      match,
+      finalizeMode,
+    });
+
+    try {
+      const transfer = await slskdClient.waitForDownload(
+        {
+          username: manifestRow.slskdUsername,
+          remotePath: manifestRow.remotePath,
+          size: manifestRow.remoteSize,
+          transferId: manifestRow.slskdTransferId,
+        },
+        {
+          timeoutMs,
+          pollIntervalMs,
+          onProgress,
+        },
+      );
+      if (!transfer.localPath) {
+        throw new Error(
+          "slskd download completed but no local path could be resolved. Check the configured slskd complete directory.",
+        );
+      }
+      const updated = slskdTransferStore.syncTransfer(manifestRow.id, transfer);
+      return {
+        manifestRow: updated,
+        selectedMatch: match,
+        sourcePath: transfer.localPath,
+        selectedExt: match?.extension || "",
+      };
+    } catch (error) {
+      slskdTransferStore.markState(manifestRow.id, "failed", {
+        lastError: error?.message || String(error),
+      });
+      throw error;
+    }
   }
 }
 

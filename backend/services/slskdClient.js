@@ -496,6 +496,66 @@ export class SlskdClient {
     throw new Error("Unable to resolve newly enqueued slskd transfer");
   }
 
+  async waitForDownload(match, options = {}) {
+    const timeoutMs =
+      Number.isFinite(Number(options.timeoutMs)) &&
+      Number(options.timeoutMs) > 0
+        ? Number(options.timeoutMs)
+        : 20 * 60 * 1000;
+    const pollIntervalMs =
+      Number.isFinite(Number(options.pollIntervalMs)) &&
+      Number(options.pollIntervalMs) > 0
+        ? Number(options.pollIntervalMs)
+        : DEFAULT_SEARCH_POLL_INTERVAL_MS;
+    const startedAt = Date.now();
+    let lastTransfer = null;
+
+    while (Date.now() - startedAt <= timeoutMs) {
+      lastTransfer = await this.findDownload(match);
+      if (lastTransfer) {
+        if (
+          typeof options.onProgress === "function" &&
+          Number.isFinite(lastTransfer.bytesTransferred) &&
+          Number.isFinite(lastTransfer.size) &&
+          lastTransfer.size > 0
+        ) {
+          const progressPct = Math.max(
+            0,
+            Math.min(
+              100,
+              Math.round(
+                (lastTransfer.bytesTransferred / lastTransfer.size) * 100,
+              ),
+            ),
+          );
+          options.onProgress(progressPct, lastTransfer);
+        }
+        if (lastTransfer.isFailed) {
+          throw new Error(
+            lastTransfer.error ||
+              `slskd transfer failed${lastTransfer.state ? `: ${lastTransfer.state}` : ""}`,
+          );
+        }
+        if (lastTransfer.isComplete) {
+          return {
+            ...lastTransfer,
+            localPath:
+              lastTransfer.localPath ||
+              this.buildExpectedLocalPath({
+                username: lastTransfer.username,
+                remotePath: lastTransfer.remotePath,
+              }),
+          };
+        }
+      }
+      await sleep(pollIntervalMs);
+    }
+
+    throw new Error(
+      `slskd download timed out after ${Math.ceil(timeoutMs / 1000)} seconds`,
+    );
+  }
+
   buildExpectedLocalPath({ username, remotePath }) {
     const completeDir = String(this.config?.completeDir || "").trim();
     if (!completeDir) {

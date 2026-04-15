@@ -1,10 +1,10 @@
 import path from "path";
 import fs from "fs/promises";
 import { downloadTracker } from "./weeklyFlowDownloadTracker.js";
-import { soulseekClient } from "./simpleSoulseekClient.js";
 import { playlistManager } from "./weeklyFlowPlaylistManager.js";
 import { flowPlaylistConfig } from "./weeklyFlowPlaylistConfig.js";
 import { playlistSource } from "./weeklyFlowPlaylistSource.js";
+import { getWeeklyFlowDownloadBackend } from "./weeklyFlowDownloadBackend.js";
 import { dbOps } from "../config/db-helpers.js";
 
 const DEFAULT_CONCURRENCY = 3;
@@ -30,6 +30,8 @@ const MAX_DOWNLOAD_ATTEMPTS_PER_JOB = 4;
 const MAX_DOWNLOAD_ATTEMPTS_PER_RETRY = 6;
 const QUEUED_TIMEOUT_FIRST_ATTEMPT_MS = 4500;
 const QUEUED_TIMEOUT_RETRY_ATTEMPT_MS = 3000;
+const EXTERNAL_TRANSFER_TIMEOUT_MS = 20 * 60 * 1000;
+const EXTERNAL_TRANSFER_POLL_INTERVAL_MS = 1500;
 const FALLBACK_MP3_REGEX = /^[^/\\]+-[a-f0-9]{8}\.mp3$/i;
 const FALLBACK_SWEEP_INTERVAL_MS = 10 * 60 * 1000;
 const MAX_RETRIES_PER_JOB = 1;
@@ -189,9 +191,7 @@ export class WeeklyFlowWorker {
     }
   }
 
-  _rescheduleIncompleteRetries(
-    delayMs = this._getIncompleteRetryDelayMs(),
-  ) {
+  _rescheduleIncompleteRetries(delayMs = this._getIncompleteRetryDelayMs()) {
     const playlistTypes = [...this.incompleteRetryTimers.keys()];
     if (playlistTypes.length === 0) return 0;
     for (const playlistType of playlistTypes) {
@@ -813,7 +813,9 @@ export class WeeklyFlowWorker {
     this.lastDequeuedPlaylistType = null;
     this.currentJob = null;
     this.sanitizeCache.clear();
-    soulseekClient.disconnect().catch(() => {});
+    getWeeklyFlowDownloadBackend()
+      .disconnect()
+      .catch(() => {});
     console.log("[WeeklyFlowWorker] Worker stopped");
     return true;
   }
@@ -888,11 +890,13 @@ export class WeeklyFlowWorker {
     try {
       let phaseStart = process.hrtime.bigint();
       const retryAttempt = Number(this.retryAttempts.get(job.id) || 0);
-      const initialResults = await soulseekClient.search(
-        job.artistName,
-        job.trackName,
-        { forceFresh: true },
-      );
+      const { preferredFormat, preferredFormatStrict } =
+        this.getWorkerSettings();
+      const backend = getWeeklyFlowDownloadBackend();
+      const initialResults = await backend.search(job, {
+        forceFresh: true,
+        preferredFormat,
+      });
       this._assertJobCanContinue(job, runGeneration);
       timingsMs.search += Number(process.hrtime.bigint() - phaseStart) / 1e6;
       if (!initialResults || initialResults.length === 0) {
@@ -912,8 +916,6 @@ export class WeeklyFlowWorker {
       const stagingFilePath = path.join(stagingDir, stagingFile);
 
       phaseStart = process.hrtime.bigint();
-      const { preferredFormat, preferredFormatStrict } =
-        this.getWorkerSettings();
       const preferredExt = preferredFormat === "mp3" ? ".mp3" : ".flac";
       const secondaryExt = preferredFormat === "mp3" ? ".flac" : ".mp3";
       const strictSourcePool = preferredFormatStrict
@@ -931,10 +933,14 @@ export class WeeklyFlowWorker {
         preferredFormatStrict,
         retryAttempt,
       );
-      const rankedCandidates = soulseekClient.pickBestMatches(
+      const rankedCandidates = backend.rankCandidates(
         sourcePool,
         job.trackName,
         matchLimit,
+        {
+          preferredFormat,
+          preferredFormatStrict,
+        },
       );
       const candidatePool =
         Array.isArray(rankedCandidates) && rankedCandidates.length > 0
@@ -1002,21 +1008,24 @@ export class WeeklyFlowWorker {
               : ".mp3";
           try {
             const downloadStart = process.hrtime.bigint();
-            downloadedSourcePath = await soulseekClient.download(
+            const acquired = await backend.acquireCandidate(
               candidate.candidate,
-              stagingFilePath,
-              (progressPct) => {
-                if (!this.currentJob || this.currentJob.id !== job.id) return;
-                this.currentJob.progressPct = Math.max(
-                  0,
-                  Math.min(100, Number(progressPct) || 0),
-                );
-              },
               {
+                job,
+                stagingFilePath,
                 queuedTimeoutMs:
                   attemptIndex === 0
                     ? QUEUED_TIMEOUT_FIRST_ATTEMPT_MS
                     : QUEUED_TIMEOUT_RETRY_ATTEMPT_MS,
+                transferTimeoutMs: EXTERNAL_TRANSFER_TIMEOUT_MS,
+                transferPollIntervalMs: EXTERNAL_TRANSFER_POLL_INTERVAL_MS,
+                onProgress: (progressPct) => {
+                  if (!this.currentJob || this.currentJob.id !== job.id) return;
+                  this.currentJob.progressPct = Math.max(
+                    0,
+                    Math.min(100, Number(progressPct) || 0),
+                  );
+                },
               },
             );
             this._assertJobCanContinue(job, runGeneration);
@@ -1025,8 +1034,9 @@ export class WeeklyFlowWorker {
             if (this.currentJob && this.currentJob.id === job.id) {
               this.currentJob.progressPct = 100;
             }
-            selectedMatch = candidate.candidate;
-            selectedExt = ext;
+            downloadedSourcePath = acquired?.sourcePath || null;
+            selectedMatch = acquired?.selectedMatch || candidate.candidate;
+            selectedExt = acquired?.selectedExt || ext;
             lastError = null;
             break;
           } catch (err) {
@@ -1054,7 +1064,9 @@ export class WeeklyFlowWorker {
 
       const artistDir = this._sanitizePathPart(job.artistName);
       const albumFromApi = this._normalizeAlbumName(job.albumName);
-      const albumFromPath = this._parseAlbumFromPath(selectedMatch.file);
+      const matchFilePath =
+        selectedMatch?.file || selectedMatch?.remotePath || selectedMatch?.path;
+      const albumFromPath = this._parseAlbumFromPath(matchFilePath);
       const resolvedAlbum = albumFromApi || albumFromPath || "Unknown Album";
       const albumDir = this._sanitizePathPart(resolvedAlbum);
       const finalDir = path.join(
@@ -1069,8 +1081,13 @@ export class WeeklyFlowWorker {
 
       phaseStart = process.hrtime.bigint();
       this._assertJobCanContinue(job, runGeneration);
-      await fs.mkdir(finalDir, { recursive: true });
-      await fs.rename(sourcePath, finalPath);
+      await backend.finalizeDownload({
+        job,
+        selectedMatch,
+        sourcePath,
+        finalDir,
+        finalPath,
+      });
       await fs.rm(stagingDir, { recursive: true, force: true });
       this._assertJobCanContinue(job, runGeneration);
 
@@ -1214,10 +1231,12 @@ export class WeeklyFlowWorker {
 
   getStatus() {
     const settings = this.getWorkerSettings();
+    const backend = getWeeklyFlowDownloadBackend();
     return {
       running: this.running,
       processing: this.activeCount > 0,
       activeCount: this.activeCount,
+      downloadBackend: backend.name,
       stats: downloadTracker.getStats(),
       currentJob: this.currentJob,
       lastJobMetrics: this.lastJobMetrics,
