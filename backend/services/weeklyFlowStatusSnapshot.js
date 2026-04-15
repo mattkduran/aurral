@@ -3,6 +3,7 @@ import { weeklyFlowWorker } from "./weeklyFlowWorker.js";
 import { flowPlaylistConfig } from "./weeklyFlowPlaylistConfig.js";
 import { weeklyFlowOperationQueue } from "./weeklyFlowOperationQueue.js";
 import { soulseekClient } from "./simpleSoulseekClient.js";
+import { dbOps } from "../config/db-helpers.js";
 import { slskdClient } from "./slskdClient.js";
 
 function formatNextRunMessage(flows) {
@@ -58,6 +59,8 @@ export function getWeeklyFlowStatusSnapshot({
   flowId = null,
   jobsLimit = null,
 } = {}) {
+  const settings = dbOps.getSettings();
+  const slskdSettings = settings.integrations?.slskd || {};
   const workerStatus = weeklyFlowWorker.getStatus();
   const flows = flowPlaylistConfig.getFlows();
   const sharedPlaylists = flowPlaylistConfig.getSharedPlaylistSummaries();
@@ -138,7 +141,11 @@ export function getWeeklyFlowStatusSnapshot({
     downloadBackend: workerStatus?.downloadBackend || "builtin",
     soulseek: soulseekClient.getStatus(),
     slskd: {
+      selected:
+        String(slskdSettings.downloadBackend || "builtin") === "external_slskd",
       configured: slskdClient.isConfigured(),
+      finalizationMode: String(slskdSettings.finalizationMode || "hardlink"),
+      completeDirConfigured: !!String(slskdSettings.completeDir || "").trim(),
     },
     stats,
     flowStats,

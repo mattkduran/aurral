@@ -476,6 +476,38 @@ router.get("/slskd/test", async (req, res) => {
   }
 });
 
+router.post("/slskd/filesystem/validate", async (req, res) => {
+  try {
+    const { validateSlskdFilesystem } = await import(
+      "../services/slskdFilesystemValidator.js"
+    );
+    const result = await validateSlskdFilesystem({
+      completeDir: req.body?.completeDir,
+      finalizationMode: req.body?.finalizationMode,
+    });
+    if (result.valid) {
+      return res.json({
+        success: true,
+        message: "Filesystem validation successful",
+        ...result,
+      });
+    }
+    return res.status(400).json({
+      success: false,
+      error: "Filesystem validation failed",
+      message: "One or more filesystem checks failed",
+      ...result,
+    });
+  } catch (error) {
+    console.error("[Settings] slskd filesystem validation error:", error);
+    res.status(500).json({
+      error: "Filesystem validation failed",
+      message: error.message,
+      stack: process.env.NODE_ENV === "development" ? error.stack : undefined,
+    });
+  }
+});
+
 router.post("/lidarr/apply-community-guide", async (req, res) => {
   try {
     const { lidarrClient } = await import("../services/lidarrClient.js");

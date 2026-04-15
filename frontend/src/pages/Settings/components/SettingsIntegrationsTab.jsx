@@ -6,6 +6,7 @@ import {
   getLidarrProfiles,
   testLidarrConnection,
   testSlskdConnection,
+  validateSlskdFilesystem,
 } from "../../../utils/api";
 
 export function SettingsIntegrationsTab({
@@ -38,6 +39,8 @@ export function SettingsIntegrationsTab({
   const [lidarrTestLatencyMs, setLidarrTestLatencyMs] = useState(null);
   const [testingSlskd, setTestingSlskd] = useState(false);
   const [slskdTestLatencyMs, setSlskdTestLatencyMs] = useState(null);
+  const [validatingSlskdFs, setValidatingSlskdFs] = useState(false);
+  const [slskdFsValidation, setSlskdFsValidation] = useState(null);
   const safeLidarrProfiles = Array.isArray(lidarrProfiles)
     ? lidarrProfiles
     : [];
@@ -193,6 +196,35 @@ export function SettingsIntegrationsTab({
       showError(`Connection failed: ${errorMsg}`);
     } finally {
       setTestingSlskd(false);
+    }
+  };
+
+  const handleValidateSlskdFilesystem = async () => {
+    const completeDir = settings.integrations?.slskd?.completeDir;
+    const finalizationMode = settings.integrations?.slskd?.finalizationMode;
+    if (!completeDir) {
+      showError("Please enter the slskd complete directory first");
+      return;
+    }
+    setValidatingSlskdFs(true);
+    try {
+      const result = await validateSlskdFilesystem({
+        completeDir,
+        finalizationMode,
+      });
+      setSlskdFsValidation(result);
+      showSuccess("slskd filesystem validation successful");
+    } catch (err) {
+      const payload = err.response?.data;
+      const result = payload && typeof payload === "object" ? payload : null;
+      if (result) {
+        setSlskdFsValidation(result);
+      }
+      const errorMsg =
+        payload?.message || payload?.error || err.message || "Validation failed";
+      showError(`Filesystem validation failed: ${errorMsg}`);
+    } finally {
+      setValidatingSlskdFs(false);
     }
   };
 
@@ -847,6 +879,76 @@ export function SettingsIntegrationsTab({
                 Shared-instance safe mode defaults to preserving the original
                 slskd source files.
               </p>
+            </div>
+            <div>
+              <label
+                className="block text-sm font-medium mb-2"
+                style={{ color: "#fff" }}
+              >
+                Filesystem Validation
+              </label>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleValidateSlskdFilesystem}
+                  disabled={
+                    validatingSlskdFs ||
+                    !settings.integrations?.slskd?.completeDir
+                  }
+                  className="btn btn-secondary"
+                >
+                  {validatingSlskdFs ? "Validating..." : "Validate Filesystem"}
+                </button>
+                {slskdFsValidation?.valid && (
+                  <span className="text-xs text-green-400">
+                    Validation passed
+                  </span>
+                )}
+                {slskdFsValidation && !slskdFsValidation.valid && (
+                  <span className="text-xs text-amber-300">
+                    Validation failed
+                  </span>
+                )}
+              </div>
+              <p className="mt-1 text-xs" style={{ color: "#c1c1c3" }}>
+                Validates the shared slskd complete directory, the final
+                `aurral-weekly-flow` library root, and hardlink readiness when
+                hardlink mode is selected.
+              </p>
+              {slskdFsValidation?.checks && (
+                <div
+                  className="mt-3 rounded-md p-3 space-y-2 text-xs"
+                  style={{
+                    backgroundColor: "#151518",
+                    border: "1px solid #2a2a2e",
+                    color: "#d6d6d8",
+                  }}
+                >
+                  <div>
+                    Complete dir:{" "}
+                    {slskdFsValidation.checks.completeDir?.ok ? "OK" : "Failed"}
+                    {slskdFsValidation.checks.completeDir?.path
+                      ? ` (${slskdFsValidation.checks.completeDir.path})`
+                      : ""}
+                  </div>
+                  <div>{slskdFsValidation.checks.completeDir?.message}</div>
+                  <div>
+                    Final library root:{" "}
+                    {slskdFsValidation.checks.finalLibraryRoot?.ok
+                      ? "OK"
+                      : "Failed"}
+                    {slskdFsValidation.checks.finalLibraryRoot?.path
+                      ? ` (${slskdFsValidation.checks.finalLibraryRoot.path})`
+                      : ""}
+                  </div>
+                  <div>{slskdFsValidation.checks.finalLibraryRoot?.message}</div>
+                  <div>
+                    Hardlink check:{" "}
+                    {slskdFsValidation.checks.hardlink?.ok ? "OK" : "Failed"}
+                  </div>
+                  <div>{slskdFsValidation.checks.hardlink?.message}</div>
+                </div>
+              )}
             </div>
           </fieldset>
         </div>

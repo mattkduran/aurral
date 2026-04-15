@@ -1706,6 +1706,41 @@ function FlowPage() {
           </button>
         </div>
       </div>
+      <div
+        className="mb-4 flex flex-wrap items-center gap-2 text-xs"
+        style={{ color: "#c1c1c3" }}
+      >
+        <span
+          className="rounded-full px-2 py-1"
+          style={{ backgroundColor: "#1a1a1e", border: "1px solid #2a2a2e" }}
+        >
+          Backend:{" "}
+          {status?.downloadBackend === "external_slskd"
+            ? "External slskd"
+            : "Built-in Soulseek"}
+        </span>
+        {status?.downloadBackend === "external_slskd" && (
+          <span
+            className="rounded-full px-2 py-1"
+            style={{ backgroundColor: "#1a1a1e", border: "1px solid #2a2a2e" }}
+          >
+            Finalization:{" "}
+            {status?.slskd?.finalizationMode === "copy" ? "Copy" : "Hardlink"}
+          </span>
+        )}
+        {status?.downloadBackend === "external_slskd" && !status?.slskd?.configured && (
+          <span className="text-amber-300">
+            External slskd is selected but not fully configured.
+          </span>
+        )}
+        {status?.downloadBackend === "external_slskd" &&
+          status?.slskd?.configured &&
+          !status?.slskd?.completeDirConfigured && (
+            <span className="text-amber-300">
+              Configure the slskd complete directory before running flows.
+            </span>
+          )}
+      </div>
 
       <div className="space-y-4">
         {sharedPlaylists.length > 0 && (

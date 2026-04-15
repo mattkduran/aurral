@@ -631,6 +631,17 @@ export const testSlskdConnection = async (url, apiKey) => {
   return response.data;
 };
 
+export const validateSlskdFilesystem = async ({
+  completeDir,
+  finalizationMode,
+} = {}) => {
+  const response = await api.post("/settings/slskd/filesystem/validate", {
+    completeDir,
+    finalizationMode,
+  });
+  return response.data;
+};
+
 export const testGotifyConnection = async (url, token) => {
   const response = await api.post("/settings/gotify/test", { url, token });
   return response.data;
