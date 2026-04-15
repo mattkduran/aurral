@@ -14,3 +14,4 @@ backend/data/*
 *.swo
 *~
 /*.mp3
+/docs/*
